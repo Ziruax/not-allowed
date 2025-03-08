@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import re
 from html import unescape
 from bs4 import BeautifulSoup
 
@@ -13,6 +14,7 @@ st.set_page_config(
 
 # Constants
 WHATSAPP_DOMAIN = "https://chat.whatsapp.com/"
+IMAGE_PATTERN = re.compile(r'https:\/\/pps\.whatsapp\.net\/.*\.jpg\?[^&]*&[^&]+')
 
 def load_links(uploaded_file):
     """Load links from an uploaded TXT or CSV file."""
@@ -22,70 +24,63 @@ def load_links(uploaded_file):
         return [line.decode().strip() for line in uploaded_file.readlines()]
 
 def validate_link(link):
-    """Validate a WhatsApp group link and extract group details."""
+    """Validate WhatsApp group link without browser automation."""
     result = {
-        "Group Name": "Unknown",
+        "Group Name": "Expired",
         "Group Link": link,
         "Logo URL": "",
         "Status": "Expired"
     }
     
-    # Preliminary check for valid WhatsApp link format
-    if not link.startswith(WHATSAPP_DOMAIN):
-        result["Status"] = "Invalid"
-        return result
-    
     try:
-        # Headers to mimic a browser request
+        # Headers to bypass Cloudflare protection
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9"
         }
         
-        # Fetch the link with a timeout and allow redirects
+        # Follow redirects to get the final URL
         response = requests.get(link, headers=headers, timeout=10, allow_redirects=True)
         
-        # Check if the link is expired based on the final URL
+        # Original logic: if final URL doesn't contain WHATSAPP_DOMAIN, link is expired
         if WHATSAPP_DOMAIN not in response.url:
-            return result  # Expired
-        
+            return result
+            
+        # Parse HTML content
         soup = BeautifulSoup(response.text, 'html.parser')
         
         # Extract group name from meta tags
         meta_title = soup.find('meta', property='og:title')
-        if meta_title:
-            result["Group Name"] = unescape(meta_title['content']).strip()
-            result["Status"] = "Active"  # Active if group name is found
+        result["Group Name"] = unescape(meta_title['content']).strip() if meta_title else "Unnamed Group"
         
-        # Extract logo URL from the group preview image div
-        preview_div = soup.find('div', class_='invite-link-preview-image')
-        if preview_div:
-            img_tag = preview_div.find('img')
-            if img_tag and 'src' in img_tag.attrs:
-                result["Logo URL"] = unescape(img_tag['src'])
-        
+        # Find valid image URL using regex pattern
+        img_tags = soup.find_all('img', src=True)
+        for img in img_tags:
+            src = unescape(img['src'])
+            if IMAGE_PATTERN.match(src):
+                result["Logo URL"] = src.replace('&', '&')
+                result["Status"] = "Active"
+                break
+                
         return result
-    
+        
     except Exception as e:
-        result["Status"] = "Error"
         return result
 
 def main():
     """Main function to run the WhatsApp Group Validator app."""
-    st.title("WhatsApp Group Validator 🚀")
-    st.markdown("### Validate your WhatsApp group links")
-    st.markdown("This app checks if WhatsApp group links are active and extracts group names and logos.")
-    st.markdown("**Possible statuses:** Active, Expired, Invalid, Error")
+    st.title("WhatsApp Group Link Validator 🚀")
+    st.markdown("### Validate your WhatsApp group links with ease")
+    st.markdown("Upload a file or enter links manually to check their status. **Statuses:** Active (valid group), Expired (invalid or expired link).")
 
     # Input method selection
-    input_method = st.selectbox("Choose input method", ["Upload file", "Enter links manually"])
+    input_method = st.selectbox("Choose how to provide links", ["Upload file (TXT/CSV)", "Enter links manually"])
     
-    if input_method == "Upload file":
-        uploaded_file = st.file_uploader("Choose file (TXT/CSV)", type=["txt", "csv"])
+    links = []
+    if input_method == "Upload file (TXT/CSV)":
+        uploaded_file = st.file_uploader("Choose file", type=["txt", "csv"])
         if uploaded_file:
             links = load_links(uploaded_file)
-        else:
-            links = []
     else:
         links_text = st.text_area("Enter links (one per line)", height=200, placeholder="https://chat.whatsapp.com/...")
         links = [line.strip() for line in links_text.split('\n') if line.strip()]
@@ -103,21 +98,23 @@ def main():
                 progress.progress((i + 1) / len(links))
                 status_text.text(f"Processed {i + 1}/{len(links)} links")
             
-            # Create DataFrame with all results
+            # Create DataFrame with results
             df = pd.DataFrame(results)
-            valid_df = df[df['Status'] == 'Active']
+            active_df = df[df['Status'] == 'Active']
+            expired_df = df[df['Status'] == 'Expired']
             
             # Display summary statistics
-            st.success(f"Found {len(valid_df)} active groups out of {len(links)} links!")
-            st.write(f"**Total links processed:** {len(links)}")
-            st.write(f"**Active links:** {len(valid_df)}")
-            st.write(f"**Expired/Invalid/Error links:** {len(df) - len(valid_df)}")
+            st.success(f"Found {len(active_df)} active groups out of {len(links)} links!")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Links", len(links))
+            col2.metric("Active Links", len(active_df))
+            col3.metric("Expired Links", len(expired_df))
             
             # Option to show all links or only active ones
-            show_all = st.checkbox("Show all links (including expired/invalid)", value=False)
-            display_df = df if show_all else valid_df
+            show_all = st.checkbox("Show all links (including expired)", value=False)
+            display_df = df if show_all else active_df
             
-            # Display results in a DataFrame
+            # Display results in a table
             st.dataframe(
                 display_df,
                 column_config={
@@ -132,7 +129,7 @@ def main():
             )
             
             # Download button for active groups
-            csv = valid_df.to_csv(index=False)
+            csv = active_df.to_csv(index=False)
             st.download_button(
                 "Download Active Groups",
                 csv,
@@ -140,7 +137,7 @@ def main():
                 "text/csv"
             )
     else:
-        st.info("Please upload a file or enter links to validate.")
+        st.info("Please upload a file or enter links to start validation.")
 
 if __name__ == "__main__":
     main()
