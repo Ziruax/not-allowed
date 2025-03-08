@@ -3,14 +3,14 @@ import pandas as pd
 import requests
 import re
 import time
-from html import unescape
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from html import unescape
 
 # Streamlit Configuration
 st.set_page_config(
-    page_title="WhatsApp Group Validator Pro",
-    page_icon="✅",
+    page_title="WhatsApp Group Finder",
+    page_icon="🔍",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -21,73 +21,65 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9"
 }
 WHATSAPP_PATTERN = re.compile(r'https://chat\.whatsapp\.com/(invite/)?[a-zA-Z0-9]{22}')
-IMAGE_PATTERN = re.compile(r'https:\/\/pps\.whatsapp\.net\/.*\.jpg\?[^&]*&[^&]+')
 MAX_WORKERS = 3
 
-@st.cache_data(show_spinner=False)
-def google_search(query: str, pages: int = 3) -> list:
-    """Robust Google search with link extraction"""
+def search_and_scrape_links(query: str, pages: int) -> list:
+    """Search Google and scrape WhatsApp links from all result pages"""
     session = requests.Session()
-    links = set()
+    all_links = set()
     
     try:
         for page in range(pages):
             url = f"https://www.google.com/search?q={query}&start={page*10}"
             response = session.get(url, headers=HEADERS, timeout=15)
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Extract all URLs from page
-            all_links = re.findall(r'https?://[^\s"\'<>]+', response.text)
-            whatsapp_links = [link for link in all_links if WHATSAPP_PATTERN.match(link.split("&")[0])]
-            links.update(whatsapp_links)
+            # Find all links in search results
+            for result in soup.find_all('div', {'class': 'g'}):
+                link = result.find('a', href=True)
+                if link and (href := link['href']):
+                    if href.startswith('/url?q='):
+                        href = href.split('/url?q=')[1].split('&')[0]
+                    if WHATSAPP_PATTERN.match(href):
+                        all_links.add(href)
             
-            time.sleep(2)  # Avoid blocking
+            time.sleep(2)  # Avoid getting blocked
             
     except Exception as e:
-        st.error(f"Search failed: {str(e)}")
-    return list(links)[:20]
+        st.error(f"Search error: {str(e)}")
+    
+    return list(all_links)
 
-def validate_group(link: str) -> dict:
-    """Comprehensive group validation"""
+def validate_whatsapp_link(link: str) -> dict:
+    """Validate WhatsApp group link and extract information"""
     result = {
-        "name": "Expired Group",
+        "name": "Expired",
         "link": link,
-        "image": "",
-        "status": "Expired",
-        "members": "N/A"
+        "logo": "",
+        "status": "Expired"
     }
     
     try:
         with requests.Session() as session:
-            # Follow redirects and get final URL
+            # Follow redirects to final URL
             response = session.head(link, headers=HEADERS, timeout=10, allow_redirects=True)
             final_url = response.url
             
-            # Check if link is expired
+            # Check if link is valid
             if "chat.whatsapp.com" not in final_url or "invite" not in final_url:
                 return result
                 
             # Get full page content
-            response = session.get(link, headers=HEADERS, timeout=10)
+            response = session.get(final_url, headers=HEADERS, timeout=10)
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Check for expiration markers
-            if any(text in response.text for text in ["expired", "not exist", "invalid"]):
-                return result
-                
             # Extract group info
             result['status'] = "Active"
             result['name'] = unescape(soup.find('meta', property='og:title')['content']).strip()
             
-            # Member count extraction
-            if desc := soup.find('meta', property='og:description'):
-                if members := re.search(r'(\d+)\s+members', desc['content']):
-                    result['members'] = members.group(1)
-            
-            # Image URL validation
-            if img := soup.find('img', {'src': IMAGE_PATTERN}):
-                result['image'] = unescape(img['src']).replace('&amp;', '&')
-                if not requests.head(result['image'], timeout=5).ok:
-                    result['image'] = ""
+            # Extract logo URL
+            if img := soup.find('img', {'src': re.compile(r'\.jpg(\?|$)'}):
+                result['logo'] = unescape(img['src']).replace('&amp;', '&')
                 
     except Exception as e:
         pass
@@ -95,21 +87,22 @@ def validate_group(link: str) -> dict:
     return result
 
 def main():
-    st.title("WhatsApp Group Validator Pro 🚀")
+    st.title("WhatsApp Group Finder & Validator 🔍")
     
-    # Search Section
+    # Search Interface
     with st.form("search_form"):
         col1, col2 = st.columns([3, 1])
-        query = col1.text_input("Search Query:", "site:chat.whatsapp.com inurl:invite")
-        pages = col2.number_input("Search Pages:", 1, 5, 3)
+        query = col1.text_input("Enter search query:", "programming whatsapp groups")
+        pages = col2.number_input("Number of Google pages:", 1, 5, 3)
         
-        if st.form_submit_button("🔍 Search & Validate"):
-            with st.spinner("Scanning Google..."):
-                links = google_search(query, pages)
+        if st.form_submit_button("🚀 Search & Validate"):
+            with st.spinner(f"Searching {pages} Google pages..."):
+                # Step 1: Search Google and scrape links
+                links = search_and_scrape_links(query, pages)
                 st.session_state.links = links
                 st.session_state.show_results = True
 
-    # Results Section
+    # Results Display
     if st.session_state.get('show_results', False):
         if not st.session_state.links:
             st.error("No WhatsApp links found in search results")
@@ -122,9 +115,9 @@ def main():
         status_text = st.empty()
         results = []
         
-        # Parallel validation
+        # Step 2: Validate links in parallel
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {executor.submit(validate_group, link): link for link in st.session_state.links}
+            futures = {executor.submit(validate_whatsapp_link, link): link for link in st.session_state.links}
             
             for i, future in enumerate(as_completed(futures)):
                 result = future.result()
@@ -139,55 +132,37 @@ def main():
         
         if not valid_df.empty:
             st.success(f"Found {len(valid_df)} active groups!")
+            
+            # Display results with image previews
             st.dataframe(
-                valid_df[['name', 'members', 'link', 'image', 'status']],
+                valid_df[['name', 'link', 'logo', 'status']],
                 column_config={
-                    "image": st.column_config.LinkColumn("Group Image"),
-                    "link": st.column_config.LinkColumn("Group Invite")
+                    "logo": st.column_config.LinkColumn(
+                        "Group Logo",
+                        help="Click to view image",
+                        validate="^https://.*",
+                        display_text="View Logo"
+                    ),
+                    "link": st.column_config.LinkColumn(
+                        "Invite Link",
+                        help="Click to join group"
+                    )
                 },
-                height=500,
+                height=600,
                 use_container_width=True
             )
             
-            # Download
+            # CSV Download
             csv = valid_df.to_csv(index=False, encoding='utf-8-sig')
             st.download_button(
                 "💾 Download Active Groups",
                 csv,
                 "active_groups.csv",
-                "text/csv"
+                "text/csv",
+                help="Excel-friendly CSV format"
             )
         else:
-            st.error("No active groups found in the results")
-
-    # File Upload Section
-    with st.expander("📤 Upload Custom Links", expanded=False):
-        uploaded_file = st.file_uploader("Upload TXT/CSV file", type=["txt", "csv"])
-        if uploaded_file and st.button("Validate Uploaded Links"):
-            if uploaded_file.name.endswith('.csv'):
-                links = pd.read_csv(uploaded_file).iloc[:, 0].tolist()
-            else:
-                links = [line.decode().strip() for line in uploaded_file.readlines()]
-            
-            progress_bar = st.progress(0)
-            results = []
-            
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                futures = {executor.submit(validate_group, link): link for link in links}
-                
-                for i, future in enumerate(as_completed(futures)):
-                    results.append(future.result())
-                    progress = (i+1)/len(futures)
-                    progress_bar.progress(progress)
-            
-            df = pd.DataFrame(results)
-            valid_df = df[df['status'] == 'Active']
-            
-            if not valid_df.empty:
-                st.success(f"Found {len(valid_df)} active groups in uploaded file")
-                st.dataframe(valid_df)
-            else:
-                st.error("No active groups found in uploaded links")
+            st.error("No active groups found in the search results")
 
 if __name__ == "__main__":
     main()
