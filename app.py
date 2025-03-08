@@ -18,38 +18,48 @@ st.set_page_config(
 WHATSAPP_DOMAIN = "https://chat.whatsapp.com/"
 IMAGE_PATTERN = re.compile(r'https:\/\/pps\.whatsapp\.net\/.*\.jpg\?[^&]*&[^&]+')
 
-# Custom CSS for modern styling
+# Custom CSS for improved color scheme and styling
 st.markdown("""
     <style>
     .main-title {
         font-size: 2.5em;
-        color: #25D366;
+        color: #25D366; /* WhatsApp green */
         text-align: center;
         margin-bottom: 0;
     }
     .subtitle {
         font-size: 1.2em;
-        color: #555;
+        color: #4A4A4A; /* Dark gray for contrast */
         text-align: center;
         margin-top: 0;
     }
     .stButton>button {
-        background-color: #25D366;
-        color: white;
-        border-radius: 10px;
+        background-color: #25D366; /* WhatsApp green */
+        color: #FFFFFF; /* White text */
+        border-radius: 8px;
         font-weight: bold;
+        border: none;
     }
     .stButton>button:hover {
-        background-color: #128C7E;
+        background-color: #1EBE5A; /* Slightly darker green */
+        color: #FFFFFF;
     }
     .stProgress .st-bo {
-        background-color: #25D366;
+        background-color: #25D366; /* WhatsApp green */
     }
     .metric-card {
-        background-color: #f9f9f9;
-        padding: 10px;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        background-color: #F5F6F5; /* Light gray background */
+        padding: 12px;
+        border-radius: 8px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        color: #333333; /* Dark text for readability */
+    }
+    .stTextInput, .stTextArea {
+        border: 1px solid #25D366;
+        border-radius: 5px;
+    }
+    .sidebar .sidebar-content {
+        background-color: #F5F6F5; /* Light gray sidebar */
     }
     </style>
 """, unsafe_allow_html=True)
@@ -71,17 +81,14 @@ def validate_link(link):
         
         response = requests.get(link, headers=headers, timeout=10, allow_redirects=True)
         
-        # Check if link redirects away from WhatsApp domain (expired/invalid)
         if WHATSAPP_DOMAIN not in response.url:
             return result
             
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Extract group name from meta tag
         meta_title = soup.find('meta', property='og:title')
         result["Group Name"] = unescape(meta_title['content']).strip() if meta_title and meta_title.get('content') else "Unnamed Group"
         
-        # Extract logo URL from img tags
         img_tags = soup.find_all('img', src=True)
         for img in img_tags:
             src = unescape(img['src'])
@@ -120,25 +127,33 @@ def load_links(uploaded_file):
         return [line.decode().strip() for line in uploaded_file.readlines()]
 
 def main():
-    """Main function to run the WhatsApp Group Validator app."""
+    """Main function to run the enhanced WhatsApp Group Validator app."""
     st.markdown('<h1 class="main-title">WhatsApp Group Validator 🚀</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle">Search, scrape, or validate WhatsApp group links with ease</p>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">Discover, scrape, and validate WhatsApp group links seamlessly</p>', unsafe_allow_html=True)
 
-    # Sidebar for input method selection
+    # Sidebar for settings
     with st.sidebar:
-        st.header("⚙️ Settings")
-        st.markdown("Choose how to validate your WhatsApp links")
+        st.header("⚙️ Options")
+        st.markdown("Select your preferred method")
         input_method = st.selectbox("Input Method", ["Search and Scrape from Google", "Enter Links Manually", "Upload File (TXT/CSV)"])
         if input_method == "Search and Scrape from Google":
-            num_pages = st.slider("Number of Google Search Pages", min_value=1, max_value=10, value=3)
+            num_pages = st.slider("Number of Google Pages to Scrape", min_value=1, max_value=5, value=3, help="Limit to 5 to avoid rate-limiting")
+        else:
+            num_pages = 0
+
+    # Clear button to reset results
+    if st.button("🗑️ Clear Results", use_container_width=True):
+        if 'results' in st.session_state:
+            del st.session_state['results']
+        st.success("Results cleared successfully!")
 
     # Input Section
     with st.container():
         results = []
         
         if input_method == "Search and Scrape from Google":
-            st.subheader("🔍 Search for WhatsApp Groups")
-            keyword = st.text_input("Enter your search query:", placeholder="e.g., 'music enthusiasts whatsapp group'")
+            st.subheader("🔍 Google Search & Scrape")
+            keyword = st.text_input("Enter Search Query:", placeholder="e.g., 'music whatsapp groups site:*.com -inurl:(login)'", help="Use site: and -inurl: for better results")
             if st.button("Search, Scrape, and Validate", use_container_width=True):
                 if not keyword:
                     st.warning("Please enter a search query.")
@@ -146,12 +161,11 @@ def main():
 
                 with st.spinner("Searching Google..."):
                     try:
-                        # Collect URLs from specified number of pages (10 results per page)
+                        # Fetch URLs from specified number of pages
                         search_results = []
                         for i in range(num_pages):
-                            start = i * 10
-                            page_results = list(search(keyword, stop=10, pause=2))
-                            search_results.extend(page_results)
+                            page_results = list(search(query=keyword, num_results=10, pause=2))
+                            search_results.extend(page_results[:10])  # Limit to 10 per page
                     except Exception as e:
                         st.error(f"Error performing Google search: {e}")
                         return
@@ -160,7 +174,7 @@ def main():
                     st.info("No search results found for the query.")
                     return
 
-                st.success(f"Found {len(search_results)} webpages. Scraping WhatsApp group links...")
+                st.success(f"Found {len(search_results)} webpages. Scraping WhatsApp links...")
 
                 # Scrape links from each webpage
                 all_links = []
@@ -170,7 +184,7 @@ def main():
                     all_links.extend(links)
                     progress.progress((idx + 1) / len(search_results))
 
-                unique_links = list(set(all_links))  # Remove duplicates
+                unique_links = list(set(all_links))
                 if not unique_links:
                     st.warning("No WhatsApp group links found in the scraped webpages.")
                     return
@@ -187,8 +201,8 @@ def main():
                     status_text.text(f"Validated {i + 1}/{len(unique_links)} links")
 
         elif input_method == "Enter Links Manually":
-            st.subheader("📝 Enter WhatsApp Group Links")
-            links_text = st.text_area("Paste your WhatsApp group links (one per line):", height=200, placeholder="e.g., https://chat.whatsapp.com/...")
+            st.subheader("📝 Manual Link Entry")
+            links_text = st.text_area("Enter WhatsApp Links (one per line):", height=200, placeholder="e.g., https://chat.whatsapp.com/...")
             if st.button("Validate Links", use_container_width=True):
                 links = [line.strip() for line in links_text.split('\n') if line.strip()]
                 if not links:
@@ -204,8 +218,8 @@ def main():
                     status_text.text(f"Validated {i + 1}/{len(links)} links")
 
         elif input_method == "Upload File (TXT/CSV)":
-            st.subheader("📥 Upload WhatsApp Group Links")
-            uploaded_file = st.file_uploader("Choose a TXT or CSV file", type=["txt", "csv"])
+            st.subheader("📥 File Upload")
+            uploaded_file = st.file_uploader("Upload TXT or CSV file", type=["txt", "csv"], help="File should contain one link per line or in first column")
             if uploaded_file and st.button("Validate File Links", use_container_width=True):
                 links = load_links(uploaded_file)
                 if not links:
@@ -231,32 +245,31 @@ def main():
         expired_df = df[df['Status'] == 'Expired']
 
         # Summary Metrics
-        st.subheader("📊 Validation Summary")
+        st.subheader("📊 Results Overview")
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            st.metric("Total Links", len(df), help="Total WhatsApp group links validated")
+            st.metric("Total Links", len(df), help="Total links processed")
             st.markdown('</div>', unsafe_allow_html=True)
         with col2:
             st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            st.metric("Active Links", len(active_df), help="Links that are currently valid")
+            st.metric("Active Links", len(active_df), help="Valid WhatsApp groups")
             st.markdown('</div>', unsafe_allow_html=True)
         with col3:
             st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            st.metric("Expired Links", len(expired_df), help="Links that are expired or invalid")
+            st.metric("Expired Links", len(expired_df), help="Invalid or expired links")
             st.markdown('</div>', unsafe_allow_html=True)
 
-        # Filter Options
-        with st.expander("🔎 Filter Results", expanded=True):
+        # Filter and Display Results
+        with st.expander("🔎 View and Filter Results", expanded=True):
             status_filter = st.multiselect("Filter by Status", options=["Active", "Expired"], default=["Active"])
             filtered_df = df[df['Status'].isin(status_filter)] if status_filter else df
 
-            # Display Filtered Results
             st.dataframe(
                 filtered_df,
                 column_config={
-                    "Group Link": st.column_config.LinkColumn("Group Link", display_text="Join Group"),
-                    "Logo URL": st.column_config.LinkColumn("Group Logo", help="Click to view image")
+                    "Group Link": st.column_config.LinkColumn("Invite Link", display_text="Join Group"),
+                    "Logo URL": st.column_config.LinkColumn("Logo", help="Click to view group logo")
                 },
                 height=400,
                 use_container_width=True
@@ -284,7 +297,7 @@ def main():
             )
 
     else:
-        st.info("Choose an input method and start validating WhatsApp group links!", icon="ℹ️")
+        st.info("Select an input method and start validating WhatsApp group links!", icon="ℹ️")
 
 if __name__ == "__main__":
     main()
