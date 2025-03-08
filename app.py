@@ -3,13 +3,13 @@ import pandas as pd
 import requests
 from html import unescape
 from bs4 import BeautifulSoup
-from googlesearch import search
 import re
+import time
 
 # Streamlit Configuration
 st.set_page_config(
     page_title="WhatsApp Link Validator",
-    page_icon="✅",
+    page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -17,6 +17,7 @@ st.set_page_config(
 # Constants
 WHATSAPP_DOMAIN = "https://chat.whatsapp.com/"
 IMAGE_PATTERN = re.compile(r'https:\/\/pps\.whatsapp\.net\/.*\.jpg\?[^&]*&[^&]+')
+GOOGLE_SEARCH_URL = "https://www.google.com/search"
 
 # Custom CSS for enhanced UI
 st.markdown("""
@@ -36,25 +37,25 @@ st.markdown("""
     }
     .stButton>button {
         background-color: #25D366;
-        color: #FFFFFF; /* White */
+        color: #FFFFFF;
         border-radius: 8px;
         font-weight: bold;
         border: none;
         padding: 8px 16px;
     }
     .stButton>button:hover {
-        background-color: #1EBE5A; /* Darker Green */
+        background-color: #1EBE5A;
         color: #FFFFFF;
     }
     .stProgress .st-bo {
         background-color: #25D366;
     }
     .metric-card {
-        background-color: #F5F6F5; /* Light Gray */
+        background-color: #F5F6F5;
         padding: 12px;
         border-radius: 8px;
         box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        color: #333333; /* Dark Text */
+        color: #333333;
         text-align: center;
     }
     .stTextInput, .stTextArea {
@@ -122,6 +123,36 @@ def scrape_whatsapp_links(url):
     except Exception:
         return []
 
+def google_search(query, num_pages):
+    """Custom Google search to fetch URLs from multiple pages."""
+    search_results = []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    
+    for page in range(num_pages):
+        params = {
+            "q": query,
+            "start": page * 10  # Google pagination: 10 results per page
+        }
+        try:
+            response = requests.get(GOOGLE_SEARCH_URL, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Extract URLs from search results
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                if href.startswith('/url?q='):
+                    url = href.split('/url?q=')[1].split('&')[0]
+                    search_results.append(url)
+            time.sleep(2)  # Pause to avoid rate-limiting
+        except Exception as e:
+            st.error(f"Error on page {page + 1}: {e}")
+            break
+    
+    return list(set(search_results))  # Remove duplicates
+
 def load_links(uploaded_file):
     """Load WhatsApp group links from an uploaded TXT or CSV file."""
     if uploaded_file.name.endswith('.csv'):
@@ -132,7 +163,7 @@ def load_links(uploaded_file):
 def main():
     """Main function for the WhatsApp Group Validator app."""
     st.markdown('<h1 class="main-title">WhatsApp Group Validator 🚀</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle">Effortlessly search, scrape, and validate WhatsApp group links</p>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">Search, scrape, or validate WhatsApp group links with ease</p>', unsafe_allow_html=True)
 
     # Sidebar for settings
     with st.sidebar:
@@ -154,20 +185,14 @@ def main():
         
         if input_method == "Search and Scrape from Google":
             st.subheader("🔍 Google Search & Scrape")
-            keyword = st.text_input("Search Query:", placeholder="e.g., 'whatsapp group links site:*.com -inurl:(login)'", help="Refine with site: or -inurl: for better results")
+            keyword = st.text_input("Search Query:", placeholder="e.g., 'whatsapp group links site:*.com -inurl:(login)'", help="Refine with site: or -inurl:")
             if st.button("Search, Scrape, and Validate", use_container_width=True):
                 if not keyword:
                     st.warning("Please enter a search query.")
                     return
 
                 with st.spinner("Searching Google..."):
-                    try:
-                        # Corrected Google search call
-                        search_results = list(search(keyword, num=10, stop=num_pages * 10, pause=2))
-                    except Exception as e:
-                        st.error(f"Error performing Google search: {e}")
-                        st.info("Try a simpler query or check your internet connection.")
-                        return
+                    search_results = google_search(keyword, num_pages)
 
                 if not search_results:
                     st.info("No search results found for the query.")
