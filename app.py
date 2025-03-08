@@ -6,7 +6,6 @@ from bs4 import BeautifulSoup
 import re
 import time
 import random
-from fake_useragent import UserAgent
 
 # Streamlit Configuration
 st.set_page_config(
@@ -19,6 +18,7 @@ st.set_page_config(
 # Constants
 WHATSAPP_DOMAIN = "https://chat.whatsapp.com/"
 IMAGE_PATTERN = re.compile(r'https:\/\/pps\.whatsapp\.net\/.*\.jpg\?[^&]*&[^&]+')
+GOOGLE_SEARCH_URL = "https://www.google.com/search"
 
 # Custom CSS for UI
 st.markdown("""
@@ -35,20 +35,26 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Initialize fake User-Agent generator
-ua = UserAgent()
+# Proxy list (replace with real proxies)
+PROXIES = [
+    "http://103.174.102.131:80",
+    "http://47.251.43.115:33333",
+    "http://8.219.97.248:80",
+]
+
+# User-Agent list
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Safari/605.1.15",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
+]
 
 def validate_link(link):
-    """Validate a WhatsApp group link with anti-detection headers."""
     result = {"Group Name": "Expired", "Group Link": link, "Logo URL": "", "Status": "Expired"}
     try:
-        headers = {
-            "User-Agent": ua.random,  # Random User-Agent to mimic different browsers
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Referer": "https://www.google.com/"  # Fake referer to look legit
-        }
-        response = requests.get(link, headers=headers, timeout=10, allow_redirects=True)
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        proxy = {"http": random.choice(PROXIES), "https": random.choice(PROXIES)}
+        response = requests.get(link, headers=headers, proxies=proxy, timeout=10, allow_redirects=True)
         if WHATSAPP_DOMAIN not in response.url:
             return result
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -61,99 +67,81 @@ def validate_link(link):
                 result["Logo URL"] = src
                 result["Status"] = "Active"
                 break
-        time.sleep(random.uniform(0.5, 1.5))  # Random delay to mimic human behavior
         return result
     except Exception:
         return result
 
 def scrape_whatsapp_links(url):
-    """Scrape WhatsApp group links from a webpage with anti-detection."""
     try:
-        headers = {
-            "User-Agent": ua.random,
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Referer": "https://www.google.com/"
-        }
-        response = requests.get(url, headers=headers, timeout=10)
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        proxy = {"http": random.choice(PROXIES), "https": random.choice(PROXIES)}
+        response = requests.get(url, headers=headers, proxies=proxy, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
         links = [a['href'] for a in soup.find_all('a', href=True) if a['href'].startswith(WHATSAPP_DOMAIN)]
-        time.sleep(random.uniform(0.5, 2))  # Random delay
         return links
     except Exception:
         return []
 
-def simulate_google_search(query, num_pages):
-    """Simulate Google search with sample URLs (replace with API for production)."""
-    sample_urls = [
-        "https://www.example.com/islamic-groups",
-        "https://www.test.com/whatsapp-links",
-        "https://chat.whatsapp.com/DummyGroup1",
-        "https://chat.whatsapp.com/DummyGroup2",
-        "https://www.dummy.com/community-links"
-    ]
-    search_results = sample_urls * num_pages
-    return list(set(search_results[:num_pages * 5]))  # Limit results
-
-# Placeholder for Google Custom Search API (uncomment and configure for real use)
-# def google_custom_search(query, num_pages, api_key, cse_id):
-#     """Use Google Custom Search JSON API for real search."""
-#     search_results = []
-#     for page in range(num_pages):
-#         url = f"https://www.googleapis.com/customsearch/v1?key={api_key}&cx={cse_id}&q={query}&start={page * 10 + 1}"
-#         response = requests.get(url)
-#         data = response.json()
-#         items = data.get('items', [])
-#         search_results.extend([item['link'] for item in items])
-#         time.sleep(1)
-#     return list(set(search_results))
+def google_search(query, num_pages):
+    search_results = []
+    session = requests.Session()
+    for page in range(num_pages):
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        proxy = {"http": random.choice(PROXIES), "https": random.choice(PROXIES)}
+        params = {"q": query, "start": page * 10}
+        try:
+            response = session.get(GOOGLE_SEARCH_URL, headers=headers, proxies=proxy, params=params, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                if href.startswith('/url?q='):
+                    url = href.split('/url?q=')[1].split('&')[0]
+                    search_results.append(url)
+            time.sleep(random.uniform(2, 5))  # Random delay to mimic human behavior
+        except Exception as e:
+            st.error(f"Error on page {page + 1}: {e}")
+            break
+    return list(set(search_results))
 
 def load_links(uploaded_file):
-    """Load WhatsApp group links from a file."""
     if uploaded_file.name.endswith('.csv'):
         return pd.read_csv(uploaded_file).iloc[:, 0].tolist()
     else:
         return [line.decode().strip() for line in uploaded_file.readlines()]
 
 def main():
-    """Main function for the WhatsApp Group Validator app."""
     st.markdown('<h1 class="main-title">WhatsApp Group Validator 🚀</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle">Validate WhatsApp group links with advanced features</p>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">Search, scrape, or validate WhatsApp group links with ease</p>', unsafe_allow_html=True)
 
-    # Sidebar for settings
     with st.sidebar:
         st.header("⚙️ Settings")
+        st.markdown("Customize your experience")
         input_method = st.selectbox("Input Method", ["Search and Scrape from Google", "Enter Links Manually", "Upload File (TXT/CSV)"])
         if input_method == "Search and Scrape from Google":
-            num_pages = st.slider("Pages to Simulate", min_value=1, max_value=5, value=3)
+            num_pages = st.slider("Google Pages to Scrape", min_value=1, max_value=5, value=3)
 
-    # Clear Results Button
     if st.button("🗑️ Clear Results", use_container_width=True):
         if 'results' in st.session_state:
             del st.session_state['results']
         st.success("Results cleared successfully!")
 
-    # Input Section
     with st.container():
         results = []
         
         if input_method == "Search and Scrape from Google":
-            st.subheader("🔍 Google Search & Scrape (Simulated)")
-            keyword = st.text_input("Search Query:", placeholder="e.g., 'islamic whatsapp groups'", help="Currently simulated; use API for real search")
+            st.subheader("🔍 Google Search & Scrape")
+            keyword = st.text_input("Search Query:", placeholder="e.g., 'whatsapp group links site:*.com -inurl:(login)'")
             if st.button("Search, Scrape, and Validate", use_container_width=True):
                 if not keyword:
                     st.warning("Please enter a search query.")
                     return
 
-                with st.spinner("Simulating Google search..."):
-                    search_results = simulate_google_search(keyword, num_pages)
-                    # For real search, uncomment and configure:
-                    # api_key = "YOUR_GOOGLE_API_KEY"
-                    # cse_id = "YOUR_CSE_ID"
-                    # search_results = google_custom_search(keyword, num_pages, api_key, cse_id)
+                with st.spinner("Searching Google..."):
+                    search_results = google_search(keyword, num_pages)
 
                 if not search_results:
-                    st.info("No search results found (simulated).")
+                    st.info("No search results found for the query.")
                     return
 
                 st.success(f"Found {len(search_results)} webpages. Scraping WhatsApp links...")
@@ -161,16 +149,13 @@ def main():
                 all_links = []
                 progress_bar = st.progress(0)
                 for idx, url in enumerate(search_results):
-                    links = scrape_whatsapp_links(url) if not url.startswith(WHATSAPP_DOMAIN) else [url]
+                    links = scrape_whatsapp_links(url)
                     all_links.extend(links)
                     progress_bar.progress((idx + 1) / len(search_results))
-                    time.sleep(random.uniform(0.1, 0.5))  # Random delay
 
                 unique_links = list(set(all_links))
                 if not unique_links:
-                    st.warning("No WhatsApp group links found.")
-                    return= 0)
-                    st.warning("No WhatsApp group links found.")
+                    st.warning("No WhatsApp group links found in the scraped webpages.")
                     return
 
                 st.success(f"Scraped {len(unique_links)} unique WhatsApp group links. Validating...")
@@ -220,7 +205,6 @@ def main():
         if results:
             st.session_state['results'] = results
 
-    # Results Section
     if 'results' in st.session_state:
         df = pd.DataFrame(st.session_state['results'])
         active_df = df[df['Status'] == 'Active']
@@ -263,7 +247,7 @@ def main():
             st.download_button("📥 Download All Results", csv_all, "all_groups.csv", "text/csv", use_container_width=True)
 
     else:
-        st.info("Select an input method to start validating!", icon="ℹ️")
+        st.info("Select an input method to start validating WhatsApp group links!", icon="ℹ️")
 
 if __name__ == "__main__":
     main()
