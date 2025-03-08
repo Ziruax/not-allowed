@@ -162,7 +162,7 @@ def main():
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Links", len(df))
         col2.metric("Active Groups", len(active_df))
-        col3.metric("Success Rate", f"{(len(active_df)/len(df)*100:.1f}%")
+        col3.metric("Success Rate", f"{(len(active_df)/len(df)*100):.1f}%")  # Fixed f-string
         
         # Data Display
         st.dataframe(
