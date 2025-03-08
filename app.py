@@ -1,16 +1,16 @@
 import streamlit as st
 import pandas as pd
 import requests
-import re
 from html import unescape
 from bs4 import BeautifulSoup
+from googlesearch import search  # Third-party library for Google search
+import re
 
 # Streamlit Configuration
 st.set_page_config(
     page_title="WhatsApp Link Validator",
     page_icon="✅",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
 # Constants
@@ -53,15 +53,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-def load_links(uploaded_file):
-    """Load links from an uploaded TXT or CSV file."""
-    if uploaded_file.name.endswith('.csv'):
-        return pd.read_csv(uploaded_file).iloc[:, 0].tolist()
-    else:
-        return [line.decode().strip() for line in uploaded_file.readlines()]
-
 def validate_link(link):
-    """Validate WhatsApp group link without browser automation."""
+    """Validate WhatsApp group link without browser automation"""
     result = {
         "Group Name": "Expired",
         "Group Link": link,
@@ -95,53 +88,72 @@ def validate_link(link):
                 
         return result
         
-    except Exception as e:
+    except Exception:
         return result
 
-def main():
-    """Main function to run the WhatsApp Group Validator app with a modern UI."""
-    # Sidebar for settings
-    with st.sidebar:
-        st.header("⚙️ Settings")
-        st.markdown("Customize your validation experience")
-        input_method = st.selectbox("Input Method", ["Upload File (TXT/CSV)", "Enter Links Manually"])
-        theme = st.selectbox("Theme", ["Light", "Dark"])
-        if theme == "Dark":
-            st.markdown("""
-                <style>
-                body { background-color: #1E1E1E; color: #FFFFFF; }
-                .stApp { background-color: #1E1E1E; }
-                </style>
-            """, unsafe_allow_html=True)
+def scrape_whatsapp_links(url):
+    """Scrape WhatsApp group links from a given URL"""
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        links = []
+        for a_tag in soup.find_all('a', href=True):
+            href = a_tag['href']
+            if href.startswith(WHATSAPP_DOMAIN):
+                links.append(href)
+        return links
+    except Exception:
+        return []
 
-    # Main content
+def main():
+    """Main function to run the WhatsApp Group Validator app with keyword search and scraping"""
     st.markdown('<h1 class="main-title">WhatsApp Group Validator 🚀</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle">Validate your WhatsApp group links with a sleek, modern tool</p>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">Search, scrape, and validate WhatsApp group links with ease</p>', unsafe_allow_html=True)
 
     # Input Section
     with st.container():
-        st.subheader("📥 Input Your Links")
-        if input_method == "Upload File (TXT/CSV)":
-            uploaded_file = st.file_uploader("Upload a TXT or CSV file", type=["txt", "csv"], help="File should contain one link per line or in the first column.")
-            links = load_links(uploaded_file) if uploaded_file else []
-        else:
-            links_text = st.text_area("Enter WhatsApp Links", height=150, placeholder="Paste links here (one per line)\nExample: https://chat.whatsapp.com/...", help="Separate each link with a new line.")
-            links = [line.strip() for line in links_text.split('\n') if line.strip()]
+        st.subheader("🔍 Search for WhatsApp Groups")
+        keyword = st.text_input("Enter your targeted keyword:", placeholder="e.g., 'music enthusiasts'")
 
-    # Validation Button
-    if links:
-        if st.button("🔍 Start Validation", use_container_width=True):
-            with st.spinner("Validating links..."):
-                progress = st.progress(0)
-                status_text = st.empty()
-                results = []
-                
-                for i, link in enumerate(links):
-                    result = validate_link(link)
-                    results.append(result)
-                    progress.progress((i + 1) / len(links))
-                    status_text.text(f"Processed {i + 1}/{len(links)} links")
-            
+        if st.button("Start Search and Validation", use_container_width=True):
+            if not keyword:
+                st.warning("Please enter a keyword to search.")
+                return
+
+            with st.spinner("Searching Google for webpages..."):
+                try:
+                    search_results = list(search(keyword, num=20, stop=20, pause=2))
+                except Exception as e:
+                    st.error(f"Error performing Google search: {e}")
+                    return
+
+            if not search_results:
+                st.info("No search results found for the given keyword.")
+                return
+
+            st.success(f"Found {len(search_results)} webpages. Scraping for WhatsApp group links...")
+
+            all_links = []
+            for url in search_results:
+                links = scrape_whatsapp_links(url)
+                all_links.extend(links)
+
+            unique_links = list(set(all_links))  # Remove duplicates
+            st.success(f"Scraped {len(unique_links)} unique WhatsApp group links. Starting validation...")
+
+            progress = st.progress(0)
+            status_text = st.empty()
+            results = []
+
+            for i, link in enumerate(unique_links):
+                result = validate_link(link)
+                results.append(result)
+                progress.progress((i + 1) / len(unique_links))
+                status_text.text(f"Validated {i + 1}/{len(unique_links)} links")
+
             # Store results in session state for filtering
             st.session_state['results'] = results
 
@@ -156,7 +168,7 @@ def main():
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            st.metric("Total Links", len(df), help="Total number of links processed")
+            st.metric("Total Links", len(df), help="Total WhatsApp group links scraped and validated")
             st.markdown('</div>', unsafe_allow_html=True)
         with col2:
             st.markdown('<div class="metric-card">', unsafe_allow_html=True)
@@ -177,7 +189,7 @@ def main():
                 filtered_df,
                 column_config={
                     "Group Link": st.column_config.LinkColumn("Group Link", display_text="Join Group"),
-                    "Logo URL": st.column_config.LinkColumn("Group Logo", help="Click to view image", validate="^https://.*")
+                    "Logo URL": st.column_config.LinkColumn("Group Logo", help="Click to view image")
                 },
                 height=400,
                 use_container_width=True
@@ -191,9 +203,6 @@ def main():
         with col_dl2:
             csv_all = df.to_csv(index=False)
             st.download_button("📥 Download All Results", csv_all, "all_groups.csv", "text/csv", use_container_width=True)
-
-    else:
-        st.info("Upload a file or enter links to begin validation.", icon="ℹ️")
 
 if __name__ == "__main__":
     main()
