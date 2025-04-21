@@ -111,7 +111,7 @@ def validate_link(link):
         meta_title = soup.find('meta', property='og:title')
         if meta_title and meta_title.get('content'):
             group_name = unescape(meta_title['content']).strip()
-            group_name = EMOJI_PATTERN.sub('', group_name)
+            group_name = EMOJI_PATTERN.sub('', group_name)  # Remove emojis immediately after fetching
             result["Group Name"] = group_name
         else:
             result["Group Name"] = "Unnamed Group"
@@ -134,15 +134,28 @@ def validate_link(link):
     return result
 
 def scrape_whatsapp_links(url):
-    """Scrape WhatsApp group links from a webpage."""
+    """Scrape WhatsApp group links from a webpage, handling various HTML structures."""
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
-        links = [a['href'] for a in soup.find_all('a', href=True) if a['href'].startswith(WHATSAPP_DOMAIN)]
-        return links
+        
+        links = []
+        # Check for links in <a> tags
+        for a in soup.find_all('a', href=True):
+            if a['href'].startswith(WHATSAPP_DOMAIN):
+                links.append(a['href'])
+        
+        # Check for links in text content (e.g., plain text or within <p>, <div>, etc.)
+        for text in soup.stripped_strings:
+            if WHATSAPP_DOMAIN in text:
+                # Extract URLs from text
+                found_links = re.findall(r'https?://chat\.whatsapp\.com/[^\s]+', text)
+                links.extend(found_links)
+        
+        return list(set(links))  # Remove duplicates
     except Exception:
         return []
 
@@ -204,7 +217,7 @@ def main():
         
         if input_method == "Search and Scrape from Google":
             st.subheader("🔍 Google Search & Scrape")
-            keyword = st.text_input("Search Query:", placeholder="e.g., 'whatsapp group links site:*.com -inurl:(login)'", help="Refine with site: or -inurl:")
+            keyword = st.text_input("Search Query:", placeholder="Whatsapp Group Links", help="Enter a query to search for WhatsApp group links")
             if st.button("Search, Scrape, and Validate", use_container_width=True):
                 if not keyword:
                     st.warning("Please enter a search query.")
