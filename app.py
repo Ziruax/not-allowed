@@ -24,9 +24,18 @@ EMOJI_PATTERN = re.compile(
     u"\U0001F600-\U0001F64F"  # emoticons
     u"\U0001F300-\U0001F5FF"  # symbols & pictographs
     u"\U0001F680-\U0001F6FF"  # transport & map symbols
-    u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
-    u"\U00002702-\U000027B0"
-    u"\U000024C2-\U0001F251"
+    u"\U0001F1E0-\U0001F1FF"  # flags
+    u"\U00002702-\U000027B0"  # dingbats
+    u"\U000024C2-\U0001F251"  # enclosed characters
+    u"\U0001F900-\U0001F9FF"  # supplemental symbols
+    u"\U0001FA70-\U0001FAFF"  # symbols and pictographs extended
+    u"\U00002600-\U000026FF"  # miscellaneous symbols
+    u"\U00002700-\U000027BF"  # dingbats
+    u"\U0001F700-\U0001F77F"  # alchemical symbols
+    u"\U0001F7E0-\U0001F7FF"  # geometric shapes extended
+    u"\U0001F800-\U0001F8FF"  # supplemental arrows
+    u"\U0001F000-\U0001F0FF"  # mahjong tiles
+    u"\U0001F100-\U0001F1FF"  # enclosed alphanumeric supplement
     "]+",
     flags=re.UNICODE
 )
@@ -114,7 +123,10 @@ def validate_link(link):
         meta_title = soup.find('meta', property='og:title')
         if meta_title and meta_title.get('content'):
             group_name = unescape(meta_title['content']).strip()
-            group_name = EMOJI_PATTERN.sub('', group_name)  # Remove emojis after unescaping
+            # Remove emojis and non-ASCII characters
+            group_name = EMOJI_PATTERN.sub('', group_name)
+            # Additional fallback to remove any remaining non-ASCII characters
+            group_name = ''.join(c for c in group_name if ord(c) < 128)
             result["Group Name"] = group_name if group_name else "Unnamed Group"
         else:
             result["Group Name"] = "Unnamed Group"
@@ -189,8 +201,8 @@ def main():
         st.markdown("Customize your experience")
         input_method = st.selectbox(
             "Input Method",
-            ["Enter Links Manually", "Search and Scrape from Google", "Upload File (TXT/CSV)"],
-            index=0,  # Default to "Enter Links Manually"
+            ["Search and Scrape from Google", "Enter Links Manually", "Upload File (TXT/CSV)"],
+            index=0,  # Default to "Search and Scrape from Google"
             help="Choose how to input links"
         )
         if input_method == "Search and Scrape from Google":
@@ -206,26 +218,7 @@ def main():
     with st.container():
         results = []
         
-        if input_method == "Enter Links Manually":
-            st.subheader("📝 Manual Link Entry")
-            links_text = st.text_area("Enter WhatsApp Links (one per line):", height=200, placeholder="e.g., https://chat.whatsapp.com/ABC123")
-            if st.button("Validate Links", use_container_width=True):
-                links = [line.strip() for line in links_text.split('\n') if line.strip()]
-                if not links:
-                    st.warning("Please enter at least one link.")
-                    return
-
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                with ThreadPoolExecutor(max_workers=5) as executor:
-                    future_to_link = {executor.submit(validate_link, link): link for link in links}
-                    for i, future in enumerate(as_completed(future_to_link)):
-                        result = future.result()
-                        results.append(result)
-                        progress_bar.progress((i + 1) / len(links))
-                        status_text.text(f"Validated {i + 1}/{len(links)} links")
-
-        elif input_method == "Search and Scrape from Google":
+        if input_method == "Search and Scrape from Google":
             st.subheader("🔍 Google Search & Scrape")
             keyword = st.text_input("Search Query:", placeholder="e.g., Islamic WhatsApp group")
             if st.button("Search, Scrape, and Validate", use_container_width=True):
@@ -264,6 +257,25 @@ def main():
                         results.append(result)
                         progress_bar.progress((i + 1) / len(unique_links))
                         status_text.text(f"Validated {i + 1}/{len(unique_links)} links")
+
+        elif input_method == "Enter Links Manually":
+            st.subheader("📝 Manual Link Entry")
+            links_text = st.text_area("Enter WhatsApp Links (one per line):", height=200, placeholder="e.g., https://chat.whatsapp.com/ABC123")
+            if st.button("Validate Links", use_container_width=True):
+                links = [line.strip() for line in links_text.split('\n') if line.strip()]
+                if not links:
+                    st.warning("Please enter at least one link.")
+                    return
+
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    future_to_link = {executor.submit(validate_link, link): link for link in links}
+                    for i, future in enumerate(as_completed(future_to_link)):
+                        result = future.result()
+                        results.append(result)
+                        progress_bar.progress((i + 1) / len(links))
+                        status_text.text(f"Validated {i + 1}/{len(links)} links")
 
         elif input_method == "Upload File (TXT/CSV)":
             st.subheader("📥 File Upload")
@@ -343,7 +355,7 @@ def main():
             )
 
     else:
-        st.info("Start by entering WhatsApp group links manually, searching, or uploading a file!", icon="ℹ️")
+        st.info("Start by searching for WhatsApp group links, entering them manually, or uploading a file!", icon="ℹ️")
 
 if __name__ == "__main__":
     main()
