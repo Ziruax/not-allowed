@@ -5,6 +5,7 @@ from html import unescape
 from bs4 import BeautifulSoup
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Streamlit Configuration
 st.set_page_config(
@@ -18,20 +19,28 @@ st.set_page_config(
 WHATSAPP_DOMAIN = "https://chat.whatsapp.com/"
 IMAGE_PATTERN = re.compile(r'https:\/\/pps\.whatsapp\.net\/.*\.jpg\?[^&]*&[^&]+')
 GOOGLE_SEARCH_URL = "https://www.google.com/search"
+EMOJI_PATTERN = re.compile("["
+    u"\U0001F600-\U0001F64F"  # emoticons
+    u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+    u"\U0001F680-\U0001F6FF"  # transport & map symbols
+    u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+    u"\U00002702-\U000027B0"
+    u"\U000024C2-\U0001F251"
+    "]+", flags=re.UNICODE)
 
 # Custom CSS for enhanced UI
 st.markdown("""
     <style>
     .main-title {
         font-size: 2.5em;
-        color: #25D366; /* WhatsApp Green */
+        color: #25D366;
         text-align: center;
         margin-bottom: 0;
         font-weight: bold;
     }
     .subtitle {
         font-size: 1.2em;
-        color: #4A4A4A; /* Dark Gray */
+        color: #4A4A4A;
         text-align: center;
         margin-top: 0;
     }
@@ -75,10 +84,10 @@ st.markdown("""
 def validate_link(link):
     """Validate a WhatsApp group link and return details if active."""
     result = {
-        "Group Name": "Expired",
+        "Group Name": "Unknown",
         "Group Link": link,
         "Logo URL": "",
-        "Status": "Expired"
+        "Status": "Error"
     }
     
     try:
@@ -89,13 +98,23 @@ def validate_link(link):
         
         response = requests.get(link, headers=headers, timeout=10, allow_redirects=True)
         
+        if response.status_code != 200:
+            result["Status"] = f"HTTP Error {response.status_code}"
+            return result
+        
         if WHATSAPP_DOMAIN not in response.url:
+            result["Status"] = "Invalid Link"
             return result
             
         soup = BeautifulSoup(response.text, 'html.parser')
         
         meta_title = soup.find('meta', property='og:title')
-        result["Group Name"] = unescape(meta_title['content']).strip() if meta_title and meta_title.get('content') else "Unnamed Group"
+        if meta_title and meta_title.get('content'):
+            group_name = unescape(meta_title['content']).strip()
+            group_name = EMOJI_PATTERN.sub('', group_name)
+            result["Group Name"] = group_name
+        else:
+            result["Group Name"] = "Unnamed Group"
         
         img_tags = soup.find_all('img', src=True)
         for img in img_tags:
@@ -104,11 +123,15 @@ def validate_link(link):
                 result["Logo URL"] = src
                 result["Status"] = "Active"
                 break
+        else:
+            result["Status"] = "Expired"
                 
-        return result
-        
-    except Exception:
-        return result
+    except requests.exceptions.RequestException as e:
+        result["Status"] = f"Network Error: {str(e)}"
+    except Exception as e:
+        result["Status"] = f"Error: {str(e)}"
+    
+    return result
 
 def scrape_whatsapp_links(url):
     """Scrape WhatsApp group links from a webpage."""
@@ -123,35 +146,31 @@ def scrape_whatsapp_links(url):
     except Exception:
         return []
 
-def google_search(query, num_pages):
-    """Custom Google search to fetch URLs from multiple pages."""
+def google_search(query, top_n=5):
+    """Fetch URLs from Google's top N search results."""
     search_results = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
-    
-    for page in range(num_pages):
-        params = {
-            "q": query,
-            "start": page * 10  # Google pagination: 10 results per page
-        }
-        try:
-            response = requests.get(GOOGLE_SEARCH_URL, headers=headers, params=params, timeout=10)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Extract URLs from search results
-            for a in soup.find_all('a', href=True):
-                href = a['href']
-                if href.startswith('/url?q='):
-                    url = href.split('/url?q=')[1].split('&')[0]
+    params = {
+        "q": query,
+        "start": 0  # First page only
+    }
+    try:
+        response = requests.get(GOOGLE_SEARCH_URL, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        search_div = soup.find('div', id='search')
+        if search_div:
+            result_divs = search_div.find_all('div', class_='g', limit=top_n)
+            for div in result_divs:
+                a_tag = div.find('a', href=True)
+                if a_tag and a_tag['href'].startswith('/url?q='):
+                    url = a_tag['href'].split('/url?q=')[1].split('&')[0]
                     search_results.append(url)
-            time.sleep(2)  # Pause to avoid rate-limiting
-        except Exception as e:
-            st.error(f"Error on page {page + 1}: {e}")
-            break
-    
-    return list(set(search_results))  # Remove duplicates
+    except Exception as e:
+        st.error(f"Error fetching search results: {e}")
+    return search_results
 
 def load_links(uploaded_file):
     """Load WhatsApp group links from an uploaded TXT or CSV file."""
@@ -171,7 +190,7 @@ def main():
         st.markdown("Customize your experience")
         input_method = st.selectbox("Input Method", ["Search and Scrape from Google", "Enter Links Manually", "Upload File (TXT/CSV)"], help="Choose how to input links")
         if input_method == "Search and Scrape from Google":
-            num_pages = st.slider("Google Pages to Scrape", min_value=1, max_value=5, value=3, help="More pages may increase scraping time")
+            top_n = st.slider("Number of top Google results to scrape from", min_value=1, max_value=10, value=5, help="Number of top search results to scrape")
 
     # Clear Results Button
     if st.button("🗑️ Clear Results", use_container_width=True):
@@ -192,7 +211,7 @@ def main():
                     return
 
                 with st.spinner("Searching Google..."):
-                    search_results = google_search(keyword, num_pages)
+                    search_results = google_search(keyword, top_n=top_n)
 
                 if not search_results:
                     st.info("No search results found for the query.")
@@ -215,14 +234,16 @@ def main():
 
                 st.success(f"Scraped {len(unique_links)} unique WhatsApp group links. Validating...")
 
-                # Validate links
+                # Validate links concurrently
                 progress_bar = st.progress(0)
                 status_text = st.empty()
-                for i, link in enumerate(unique_links):
-                    result = validate_link(link)
-                    results.append(result)
-                    progress_bar.progress((i + 1) / len(unique_links))
-                    status_text.text(f"Validated {i + 1}/{len(unique_links)} links")
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    future_to_link = {executor.submit(validate_link, link): link for link in unique_links}
+                    for i, future in enumerate(as_completed(future_to_link)):
+                        result = future.result()
+                        results.append(result)
+                        progress_bar.progress((i + 1) / len(unique_links))
+                        status_text.text(f"Validated {i + 1}/{len(unique_links)} links")
 
         elif input_method == "Enter Links Manually":
             st.subheader("📝 Manual Link Entry")
@@ -235,11 +256,13 @@ def main():
 
                 progress_bar = st.progress(0)
                 status_text = st.empty()
-                for i, link in enumerate(links):
-                    result = validate_link(link)
-                    results.append(result)
-                    progress_bar.progress((i + 1) / len(links))
-                    status_text.text(f"Validated {i + 1}/{len(links)} links")
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    future_to_link = {executor.submit(validate_link, link): link for link in links}
+                    for i, future in enumerate(as_completed(future_to_link)):
+                        result = future.result()
+                        results.append(result)
+                        progress_bar.progress((i + 1) / len(links))
+                        status_text.text(f"Validated {i + 1}/{len(links)} links")
 
         elif input_method == "Upload File (TXT/CSV)":
             st.subheader("📥 File Upload")
@@ -252,11 +275,13 @@ def main():
 
                 progress_bar = st.progress(0)
                 status_text = st.empty()
-                for i, link in enumerate(links):
-                    result = validate_link(link)
-                    results.append(result)
-                    progress_bar.progress((i + 1) / len(links))
-                    status_text.text(f"Validated {i + 1}/{len(links)} links")
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    future_to_link = {executor.submit(validate_link, link): link for link in links}
+                    for i, future in enumerate(as_completed(future_to_link)):
+                        result = future.result()
+                        results.append(result)
+                        progress_bar.progress((i + 1) / len(links))
+                        status_text.text(f"Validated {i + 1}/{len(links)} links")
 
         # Store results in session state
         if results:
@@ -286,7 +311,7 @@ def main():
 
         # Filter and Display Results
         with st.expander("🔎 View and Filter Results", expanded=True):
-            status_filter = st.multiselect("Filter by Status", options=["Active", "Expired"], default=["Active"], help="Select statuses to display")
+            status_filter = st.multiselect("Filter by Status", options=df['Status'].unique(), default=["Active"], help="Select statuses to display")
             filtered_df = df[df['Status'].isin(status_filter)] if status_filter else df
 
             st.dataframe(
