@@ -102,7 +102,6 @@ def validate_link(link):
 
         if meta_title and meta_title.get('content'):
             group_name = unescape(meta_title['content']).strip()
-            # ✅ Emoji removal disabled as requested
             result["Group Name"] = group_name or "Unnamed Group"
         else:
             result["Group Name"] = "Unnamed Group"
@@ -281,11 +280,17 @@ def main():
         with st.expander("🔎 View and Filter Results", expanded=True):
             status_filter = st.multiselect("Filter by Status", options=df['Status'].unique(), default=["Active"])
             filtered_df = df[df['Status'].isin(status_filter)] if status_filter else df
+
+            # Format for display
+            display_df = filtered_df.copy()
+            display_df['Invite Link'] = display_df['Group Link'].apply(lambda url: f"[Join Group]({url})")
+            display_df = display_df[['Group Name', 'Invite Link', 'Logo URL', 'Status']]
+
             st.dataframe(
-                filtered_df,
+                display_df,
                 column_config={
-                    "Group Link": st.column_config.LinkColumn("Invite Link", display_text="Join Group"),
-                    "Logo URL": st.column_config.LinkColumn("Logo")
+                    "Invite Link": st.column_config.Column("Invite Link"),
+                    "Logo URL": st.column_config.ImageColumn("LOGO", width="small")
                 },
                 height=400,
                 use_container_width=True
