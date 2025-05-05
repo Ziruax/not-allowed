@@ -4,7 +4,6 @@ import requests
 from html import unescape
 from bs4 import BeautifulSoup
 import re
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from googlesearch import search
 
@@ -19,8 +18,28 @@ st.set_page_config(
 # Constants
 WHATSAPP_DOMAIN = "https://chat.whatsapp.com/"
 IMAGE_PATTERN = re.compile(r'https:\/\/pps\.whatsapp\.net\/.*\.jpg\?[^&]*&[^&]+')
+EMOJI_PATTERN = re.compile(
+    "["
+    u"\U0001F600-\U0001F64F"
+    u"\U0001F300-\U0001F5FF"
+    u"\U0001F680-\U0001F6FF"
+    u"\U0001F1E0-\U0001F1FF"
+    u"\U00002702-\U000027B0"
+    u"\U000024C2-\U0001F251"
+    u"\U0001F900-\U0001F9FF"
+    u"\U0001FA70-\U0001FAFF"
+    u"\U00002600-\U000026FF"
+    u"\U00002700-\U000027BF"
+    u"\U0001F700-\U0001F77F"
+    u"\U0001F7E0-\U0001F7FF"
+    u"\U0001F800-\U0001F8FF"
+    u"\U0001F000-\U0001F0FF"
+    u"\U0001F100-\U0001F1FF"
+    "]+",
+    flags=re.UNICODE
+)
 
-# Custom CSS for enhanced UI
+# Custom CSS
 st.markdown("""
     <style>
     .main-title {
@@ -74,7 +93,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def validate_link(link):
-    """Validate a WhatsApp group link and return details if active."""
     result = {
         "Group Name": "Unknown",
         "Group Link": link,
@@ -87,7 +105,7 @@ def validate_link(link):
             "Accept-Language": "en-US,en;q=0.9"
         }
         response = requests.get(link, headers=headers, timeout=10, allow_redirects=True)
-        response.encoding = 'utf-8'  # Force UTF-8 to preserve Urdu and emojis
+        response.encoding = 'utf-8'
 
         if response.status_code != 200:
             result["Status"] = f"HTTP Error {response.status_code}"
@@ -106,7 +124,6 @@ def validate_link(link):
         else:
             result["Group Name"] = "Unnamed Group"
 
-        # Extract group logo
         img_tags = soup.find_all('img', src=True)
         for img in img_tags:
             src = unescape(img['src'])
@@ -117,15 +134,12 @@ def validate_link(link):
         else:
             result["Status"] = "Expired"
 
-    except requests.exceptions.RequestException as e:
-        result["Status"] = f"Network Error: {str(e)}"
     except Exception as e:
         result["Status"] = f"Error: {str(e)}"
     
     return result
 
 def scrape_whatsapp_links(url):
-    """Scrape WhatsApp group links from a webpage."""
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -145,24 +159,11 @@ def scrape_whatsapp_links(url):
     except Exception:
         return []
 
-def google_search(query, top_n=5):
-    """Fetch URLs from Google's top N search results using googlesearch-python."""
-    try:
-        urls = list(search(query, num_results=top_n, lang="en"))
-        if not urls:
-            st.warning(f"No search results found for the query '{query}'. Try refining your search terms.")
-            return []
-        return urls
-    except Exception as e:
-        st.error(f"Search error: {str(e)}")
-        return []
-
 def load_links(uploaded_file):
-    """Load WhatsApp group links from an uploaded TXT or CSV file."""
     if uploaded_file.name.endswith('.csv'):
-        return pd.read_csv(uploaded_file).iloc[:, 0].tolist()
+        return pd.read_csv(uploaded_file).iloc[:, 0].astype(str).str.strip().dropna().unique().tolist()
     else:
-        return [line.decode().strip() for line in uploaded_file.readlines()]
+        return [line.decode().strip() for line in uploaded_file.readlines() if line.strip()]
 
 def main():
     st.markdown('<h1 class="main-title">WhatsApp Group Validator 🚀</h1>', unsafe_allow_html=True)
@@ -173,8 +174,7 @@ def main():
         input_method = st.selectbox(
             "Input Method",
             ["Search and Scrape from Google", "Enter Links Manually", "Upload File (TXT/CSV)"],
-            index=0,
-            help="Choose how to input links"
+            index=0
         )
         if input_method == "Search and Scrape from Google":
             top_n = st.slider("Number of top Google results to scrape from", min_value=1, max_value=10, value=5)
@@ -187,81 +187,68 @@ def main():
     with st.container():
         results = []
         if input_method == "Search and Scrape from Google":
-            st.subheader("🔍 Google Search & Scrape")
             keyword = st.text_input("Search Query:", placeholder="e.g., Islamic WhatsApp group")
             if st.button("Search, Scrape, and Validate", use_container_width=True):
                 if not keyword:
                     st.warning("Please enter a search query.")
                     return
                 with st.spinner("Searching Google..."):
-                    search_results = google_search(keyword, top_n=top_n)
+                    search_results = list(search(keyword, num_results=top_n, lang="en"))
                 if not search_results:
+                    st.warning("No search results found. Try a different query.")
                     return
                 st.success(f"Found {len(search_results)} webpages. Scraping WhatsApp links...")
                 all_links = []
-                progress_bar = st.progress(0)
                 for idx, url in enumerate(search_results):
                     links = scrape_whatsapp_links(url)
                     all_links.extend(links)
-                    progress_bar.progress((idx + 1) / len(search_results))
-                unique_links = list(set(all_links))
-                if not unique_links:
+                all_links = list(set(all_links))
+                if not all_links:
                     st.warning("No WhatsApp group links found in the scraped webpages.")
                     return
-                st.success(f"Scraped {len(unique_links)} unique WhatsApp group links. Validating...")
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+                st.success(f"Scraped {len(all_links)} unique WhatsApp group links. Validating...")
                 with ThreadPoolExecutor(max_workers=5) as executor:
-                    future_to_link = {executor.submit(validate_link, link): link for link in unique_links}
+                    future_to_link = {executor.submit(validate_link, link): link for link in all_links}
                     for i, future in enumerate(as_completed(future_to_link)):
                         result = future.result()
                         results.append(result)
-                        progress_bar.progress((i + 1) / len(unique_links))
-                        status_text.text(f"Validated {i + 1}/{len(unique_links)} links")
-
         elif input_method == "Enter Links Manually":
-            st.subheader("📝 Manual Link Entry")
             links_text = st.text_area("Enter WhatsApp Links (one per line):", height=200, placeholder="e.g., https://chat.whatsapp.com/ABC123")
             if st.button("Validate Links", use_container_width=True):
                 links = [line.strip() for line in links_text.split('\n') if line.strip()]
                 if not links:
                     st.warning("Please enter at least one link.")
                     return
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+                links = list(set(links))
+                st.info(f"Processing {len(links)} unique links.")
                 with ThreadPoolExecutor(max_workers=5) as executor:
                     future_to_link = {executor.submit(validate_link, link): link for link in links}
                     for i, future in enumerate(as_completed(future_to_link)):
                         result = future.result()
                         results.append(result)
-                        progress_bar.progress((i + 1) / len(links))
-                        status_text.text(f"Validated {i + 1}/{len(links)} links")
-
         elif input_method == "Upload File (TXT/CSV)":
-            st.subheader("📥 File Upload")
             uploaded_file = st.file_uploader("Upload TXT or CSV", type=["txt", "csv"])
             if uploaded_file and st.button("Validate File Links", use_container_width=True):
                 links = load_links(uploaded_file)
                 if not links:
                     st.warning("No links found in the uploaded file.")
                     return
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+                st.info(f"Found {len(links)} links. Removing duplicates...")
+                links = list(set(links))
+                st.success(f"Processing {len(links)} unique links.")
                 with ThreadPoolExecutor(max_workers=5) as executor:
                     future_to_link = {executor.submit(validate_link, link): link for link in links}
                     for i, future in enumerate(as_completed(future_to_link)):
                         result = future.result()
                         results.append(result)
-                        progress_bar.progress((i + 1) / len(links))
-                        status_text.text(f"Validated {i + 1}/{len(links)} links")
-
         if results:
             st.session_state['results'] = results
 
     if 'results' in st.session_state:
-        df = pd.DataFrame(st.session_state['results'])
+        df = pd.DataFrame(st.session_state['results']).drop_duplicates(subset=['Group Link'])
         active_df = df[df['Status'] == 'Active']
         expired_df = df[df['Status'] == 'Expired']
+
         st.subheader("📊 Results Summary")
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -281,7 +268,6 @@ def main():
             status_filter = st.multiselect("Filter by Status", options=df['Status'].unique(), default=["Active"])
             filtered_df = df[df['Status'].isin(status_filter)] if status_filter else df
 
-            # Format for display
             display_df = filtered_df.copy()
             display_df['Invite Link'] = display_df['Group Link'].apply(lambda url: f"[Join Group]({url})")
             display_df = display_df[['Group Name', 'Invite Link', 'Logo URL', 'Status']]
@@ -299,22 +285,10 @@ def main():
         col_dl1, col_dl2 = st.columns(2)
         with col_dl1:
             csv_active = active_df.to_csv(index=False)
-            st.download_button(
-                "📥 Download Active Groups",
-                csv_active,
-                "active_groups.csv",
-                "text/csv",
-                use_container_width=True
-            )
+            st.download_button("📥 Download Active Groups", csv_active, "active_groups.csv", "text/csv", use_container_width=True)
         with col_dl2:
             csv_all = df.to_csv(index=False)
-            st.download_button(
-                "📥 Download All Results",
-                csv_all,
-                "all_groups.csv",
-                "text/csv",
-                use_container_width=True
-            )
+            st.download_button("📥 Download All Results", csv_all, "all_groups.csv", "text/csv", use_container_width=True)
     else:
         st.info("Start by searching for WhatsApp group links, entering them manually, or uploading a file!", icon="ℹ️")
 
